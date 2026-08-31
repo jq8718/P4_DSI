@@ -12,9 +12,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define LCM_DSI_LANES 2
-#define LCM_DSI_LANE_RATE_MBPS 1000
-#define LCM_DPI_CLOCK_MHZ 80
+#define LCM_DSI_LANES P4SCAN_LCM_DSI_LANES
+#define LCM_DSI_LANE_RATE_MBPS P4SCAN_LCM_DSI_LANE_RATE_MBPS
+#define LCM_DPI_CLOCK_MHZ P4SCAN_LCM_DPI_CLOCK_MHZ
+#define LCM_PIXEL_BITS_PER_PIXEL P4SCAN_LCM_PIXEL_BITS
 
 // ILI9882Q page 6, register D9: the panel pad setting is independent of the
 // number of lanes configured in the ESP32-P4 DSI host.
@@ -27,14 +28,14 @@
 
 #define ILI9882Q_DSI_LANE_PAD ILI9882Q_DSI_2_LANE_PAD
 
-#define LCM_HBP 64
-#define LCM_HSYNC 52
-#define LCM_HFP 64
-#define LCM_VBP 16
-#define LCM_VSYNC 4
-#define LCM_VFP 20
-#define LCM_H_TOTAL (P4SCAN_LCM_H_RES + LCM_HBP + LCM_HSYNC + LCM_HFP)
-#define LCM_V_TOTAL (P4SCAN_LCM_V_RES + LCM_VBP + LCM_VSYNC + LCM_VFP)
+#define LCM_HBP P4SCAN_LCM_HBP
+#define LCM_HSYNC P4SCAN_LCM_HSYNC
+#define LCM_HFP P4SCAN_LCM_HFP
+#define LCM_VBP P4SCAN_LCM_VBP
+#define LCM_VSYNC P4SCAN_LCM_VSYNC
+#define LCM_VFP P4SCAN_LCM_VFP
+#define LCM_H_TOTAL P4SCAN_LCM_H_TOTAL
+#define LCM_V_TOTAL P4SCAN_LCM_V_TOTAL
 
 #define LCM_BACKLIGHT_GPIO 22
 #define LCM_BACKLIGHT_FREQ_HZ 1000
@@ -137,7 +138,7 @@ static const ili9882q_cmd_t s_ili9882q_init[] = {
     ILI_CMD(0xFF, 3, 0x98, 0x82, 0x0E), ILI_CMD(0x11, 1, 0x10),
     ILI_CMD(0x12, 1, 0x08), ILI_CMD(0x13, 1, 0x14), ILI_CMD(0x00, 1, 0xA0),
     ILI_CMD(0xFF, 3, 0x98, 0x82, 0x00), ILI_CMD(0x35, 1, 0x00),
-    ILI_CMD(0x3A, 1, 0x55), // DCS 16-bit RGB565, matching the 2-lane DPI stream
+    ILI_CMD(0x3A, 1, P4SCAN_LCM_PIXEL_FORMAT_DCS),
     // Keep the vendor table's one-byte payload for Sleep Out and Display On.
     // The ILI9882Q reference sequence uses 0x00 for both payload bytes.
     ILI_CMD(0x11, 1, 0x00), ILI_DELAY(120), ILI_CMD(0x29, 1, 0x00), ILI_DELAY(20),
@@ -245,13 +246,13 @@ esp_err_t p4scan_lcm_display_init(esp_lcd_panel_handle_t *ret_panel, void **ret_
 
     esp_lcd_dpi_panel_config_t dpi_config = {
         .virtual_channel = 0,
-        // PLL_F160M divides exactly to 80 MHz. The default PLL_F240M with
-        // a requested 94 MHz is integer-divided to an actual 120 MHz clock.
-        .dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_PLL_F160M,
+        // The selected mode uses an integer PLL divider and stays below the
+        // configured video bandwidth limit.
+        .dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_PLL_F240M,
         .dpi_clock_freq_mhz = LCM_DPI_CLOCK_MHZ,
-        .pixel_format = LCD_COLOR_PIXEL_FORMAT_RGB565,
-        .in_color_format = LCD_COLOR_FMT_RGB565,
-        .out_color_format = LCD_COLOR_FMT_RGB565,
+        .pixel_format = P4SCAN_LCM_USE_RGB888 ? LCD_COLOR_PIXEL_FORMAT_RGB888 : LCD_COLOR_PIXEL_FORMAT_RGB565,
+        .in_color_format = P4SCAN_LCM_USE_RGB888 ? LCD_COLOR_FMT_RGB888 : LCD_COLOR_FMT_RGB565,
+        .out_color_format = P4SCAN_LCM_USE_RGB888 ? LCD_COLOR_FMT_RGB888 : LCD_COLOR_FMT_RGB565,
         .num_fbs = 1,
         .video_timing = {
             .h_size = P4SCAN_LCM_H_RES,
@@ -278,8 +279,9 @@ esp_err_t p4scan_lcm_display_init(esp_lcd_panel_handle_t *ret_panel, void **ret_
     // The ESP32-P4 DSI bus is created in command mode with the clock lane in
     // LP. Start the DPI engine first so the generic command FIFO is serviced
     // while the panel initialization table is transmitted.
-    ESP_LOGI(TAG, "starting DPI stream (%dx%d RGB565, %d lane)",
-             P4SCAN_LCM_H_RES, P4SCAN_LCM_V_RES, LCM_DSI_LANES);
+    ESP_LOGI(TAG, "starting DPI stream (%dx%d %s, %d lane)",
+             P4SCAN_LCM_H_RES, P4SCAN_LCM_V_RES, P4SCAN_LCM_PIXEL_FORMAT_NAME,
+             LCM_DSI_LANES);
     ret = esp_lcd_panel_init(panel);
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "sending ILI9882Q initialization");
@@ -305,11 +307,17 @@ esp_err_t p4scan_lcm_display_init(esp_lcd_panel_handle_t *ret_panel, void **ret_
         return ret;
     }
 
-    uint16_t *pixels = (uint16_t *)frame_buffer;
-    const uint16_t background = 0x0841;
+    uint8_t *pixels = (uint8_t *)frame_buffer;
     for (int y = 0; y < P4SCAN_LCM_V_RES; ++y) {
         for (int x = 0; x < P4SCAN_LCM_H_RES; ++x) {
-            pixels[y * P4SCAN_LCM_H_RES + x] = background;
+            size_t offset = (y * P4SCAN_LCM_H_RES + x) * P4SCAN_LCM_PIXEL_BYTES;
+#if P4SCAN_LCM_USE_RGB888
+            pixels[offset + 0] = 0x08;
+            pixels[offset + 1] = 0x10;
+            pixels[offset + 2] = 0x20;
+#else
+            ((uint16_t *)pixels)[y * P4SCAN_LCM_H_RES + x] = 0x0841;
+#endif
         }
     }
     ret = esp_lcd_panel_draw_bitmap(panel, 0, 0, P4SCAN_LCM_H_RES, P4SCAN_LCM_V_RES,
@@ -323,14 +331,16 @@ esp_err_t p4scan_lcm_display_init(esp_lcd_panel_handle_t *ret_panel, void **ret_
         return ret;
     }
 
-    ESP_LOGI(TAG, "RGB565 dark background framebuffer submitted");
+    ESP_LOGI(TAG, "%s dark background framebuffer submitted",
+             P4SCAN_LCM_PIXEL_FORMAT_NAME);
 
     *ret_panel = panel;
     *ret_frame_buffer = frame_buffer;
     const uint32_t refresh_millihz = (uint32_t)(((uint64_t)LCM_DPI_CLOCK_MHZ * 1000000ULL * 1000ULL) /
                                                 ((uint64_t)LCM_H_TOTAL * LCM_V_TOTAL));
-    ESP_LOGI(TAG, "DPI panel started: htotal=%d vtotal=%d dpi=%dMHz refresh=%" PRIu32 ".%03" PRIu32 "Hz lane=%dMbps",
+    ESP_LOGI(TAG, "DPI panel started: htotal=%d vtotal=%d dpi=%dMHz refresh=%" PRIu32 ".%03" PRIu32 "Hz lane=%dMbps video_bw=%dMbps",
              LCM_H_TOTAL, LCM_V_TOTAL, LCM_DPI_CLOCK_MHZ,
-             refresh_millihz / 1000, refresh_millihz % 1000, LCM_DSI_LANE_RATE_MBPS);
+             refresh_millihz / 1000, refresh_millihz % 1000, LCM_DSI_LANE_RATE_MBPS,
+             LCM_DPI_CLOCK_MHZ * LCM_PIXEL_BITS_PER_PIXEL);
     return ESP_OK;
 }

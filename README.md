@@ -96,20 +96,21 @@ Get-PnpDevice -Class Ports -PresentOnly | Select-Object FriendlyName, InstanceId
 
 ## 当前硬件实现
 
-- LCD 为 ILI9882Q，分辨率 `720x1440`，像素格式 RGB565，ESP32-P4 DSI 固定为 2-lane。
-- DSI lane rate 为 1000 Mbps/lane，当前 60 Hz 测试使用 `PLL_F160M` 的 DPI 80 MHz，时序为 `HBP/HSYNC/HFP=64/52/64`、`VBP/VSYNC/VFP=16/4/20`，总时序 `900x1480`，理论刷新约 60.06 Hz。ESP32-P4 默认 `PLL_F240M` 对请求的 94 MHz 只能整数分频，实际会变成 120 MHz。当前测试 ILI9882Q Page 6 的 `D9=0x0F`，4-lane 例程的 `0x1F` 不使用。
+- LCD 为 ILI9882Q，分辨率 `720x1440`，当前使用已验证稳定的 RGB565（RGB888 边界测试出现花屏），ESP32-P4 DSI 固定为 2-lane。
+- DSI lane rate 为 1000 Mbps/lane，RGB565 稳定配置使用 `PLL_F160M` 的 DPI 80 MHz，时序为 `HBP/HSYNC/HFP=64/52/64`、`VBP/VSYNC/VFP=16/4/20`，总时序 `900x1480`，理论刷新约 60.06 Hz。ESP32-P4 默认 `PLL_F240M` 对请求的 94 MHz 只能整数分频，实际会变成 120 MHz。当前测试 ILI9882Q Page 6 的 `D9=0x0F`，4-lane 例程的 `0x1F` 不使用。
 - 背光 PWM 使用 GPIO22，频率 1 kHz，默认亮度 50%；`p4scan_lcm_backlight_set_brightness()` 接受 0 到 100 的亮度百分比。背光硬件使能为 PCA9538A@`0x71` 的 P7。
 - T2351 使用 I2C `0x41`，INT 为 GPIO23，内部上拉、下降沿中断；使用 43 字节、Report ID `0x5A` 的 demo 报文，并校验负和 checksum，触摸坐标和 release 事件通过 log 输出。
 - PCA9538A@`0x71` 使用 I2C GPIO7/GPIO8，P0 为 RST_CTP，P1 为 LCM_RST，P2/P3 为 EN_1V8/EN_VGP1，P5/P6 为 ENN/ENP，P4 为 LED1，P7 为 BL_EN。
 - TPS65132 使用硬件默认参数。它不受 EN_1V8/VGP1 控制，只有 ENN 和 ENP 拉高后工作；本工程不注册、不探测、不写 TPS65132 的 I2C 地址或寄存器，仅通过 PCA9538A 拉高 P5/P6。
 
 当前 LCD 稳定性验证固件在 `main/main.c` 中启用 `P4SCAN_DISPLAY_ONLY=1`，暂时跳过
-T2351 初始化；显示驱动提交 RGB565 帧缓存，主循环每 50 ms 刷新一次贪吃蛇动画，
+T2351 初始化；显示驱动提交 RGB565 帧缓存，主循环每 17 ms 刷新一次贪吃蛇动画，
 触摸 I2C/IRQ 不参与显示验证。动画使用单帧缓存，现场观察时允许存在轻微撕裂。
 DPI 使用默认 LP 配置，因为 ILI9882Q 初始化表是在 DPI 视频流启动后发送，必须保留
 LP command 才能完成面板初始化。此前的 DSI 内置横向彩条仅用于链路诊断，当前已关闭。
 当前 DPI 使用 80 MHz、720x1440、900x1480 总时序，理论刷新率约为 60.06 Hz；动画线程
-按约 59 Hz 调度，蛇头每 3 帧移动一次，移动速度约 20 FPS。背景为深色纯色，动画只同步
+按约 59 Hz 调度，蛇头每 3 帧移动一次，移动速度约 20 FPS。RGB888 2-lane 边界测试出现
+花屏，当前恢复 RGB565；背景为深色纯色，动画只同步
 发生变化的行，避免连续整帧写入 PSRAM 引起 BOD。此前 120 MHz + VFP 686 测试出现花屏，已回退。
 
 ### LCD 初始化顺序
@@ -123,11 +124,29 @@ Found 32MB PSRAM device
 Speed: 200MHz
 starting DPI stream (720x1440 RGB565, 2 lane)
 sending ILI9882Q initialization
-RGB565 checkerboard framebuffer submitted
 RGB565 dark background framebuffer submitted
 DPI panel started: htotal=900 vtotal=1480 dpi=80MHz refresh=60.060Hz lane=1000Mbps
 LCM display-only diagnostic is running: RGB565 snake animation, motion~20FPS, DPI~60Hz, backlight=50%
 ```
+
+RGB888 边界测试结果如下：
+
+- `60 MHz DPI / 45.045 Hz`：连续运行 30 秒无 DSI underrun、BOD 或复位。
+- `80 MHz DPI / VFP=156 / 55.005 Hz`：连续运行 30 秒无 DSI underrun、BOD 或复位。
+- `80 MHz DPI / VFP=47 / 58.984 Hz`：连续运行 30 秒无 DSI underrun、BOD 或复位。
+- `80 MHz DPI / VFP=20 / 60.060 Hz`：实测约 30% 正常、约 70% 花屏。
+
+在 `DPI=60 MHz`、RGB888、`V_TOTAL=1480`、`video_bw=1440 Mbps` 不变时，缩短水平消隐区
+会提高刷新率。实际测试结果为：
+
+- `HBP/HFP=54/54`，`H_TOTAL=880`，`46.068 Hz`，无软件链路错误。
+- `HBP/HFP=34/34`，`H_TOTAL=840`，`48.262 Hz`，无软件链路错误。
+- `HBP/HFP=22/22`，`H_TOTAL=816`，`49.682 Hz`，无软件链路错误。
+- `HBP/HFP=14/14`，`H_TOTAL=800`，`50.675 Hz`，无软件链路错误。
+
+当前板上保持最后一档 `H_TOTAL=800`，用于现场确认画面稳定性。串口无错误不代表面板
+一定无花屏，最终以整屏视觉结果为准；产品稳定配置仍建议 RGB565/60.060 Hz。测试固件
+的 RGB888 帧缓存为每像素 3 字节。
 
 触摸屏现场触摸时应看到类似以下日志：
 

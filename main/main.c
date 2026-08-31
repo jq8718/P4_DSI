@@ -29,6 +29,24 @@ typedef struct {
     int row;
 } snake_cell_t;
 
+#if P4SCAN_LCM_USE_RGB888
+typedef uint8_t lcm_pixel_t;
+#else
+typedef uint16_t lcm_pixel_t;
+#endif
+
+static void lcm_set_pixel(lcm_pixel_t *pixels, size_t index, uint32_t color)
+{
+#if P4SCAN_LCM_USE_RGB888
+    uint8_t *pixel = (uint8_t *)pixels + index * P4SCAN_LCM_PIXEL_BYTES;
+    pixel[0] = (uint8_t)(color >> 16);
+    pixel[1] = (uint8_t)(color >> 8);
+    pixel[2] = (uint8_t)color;
+#else
+    pixels[index] = (uint16_t)color;
+#endif
+}
+
 static void snake_path_point(uint32_t step, int *col, int *row)
 {
     const uint32_t path_length = P4SCAN_SNAKE_COLS * P4SCAN_SNAKE_ROWS;
@@ -38,7 +56,8 @@ static void snake_path_point(uint32_t step, int *col, int *row)
     *col = (*row & 1) ? (P4SCAN_SNAKE_COLS - 1 - path_col) : path_col;
 }
 
-static void draw_snake_cell(uint16_t *pixels, int col, int row, uint16_t color, int inset)
+static void draw_snake_cell(lcm_pixel_t *pixels, int col, int row,
+                            uint32_t color, int inset)
 {
     const int x0 = col * P4SCAN_SNAKE_CELL_SIZE + inset;
     const int y0 = row * P4SCAN_SNAKE_CELL_SIZE + inset;
@@ -47,17 +66,17 @@ static void draw_snake_cell(uint16_t *pixels, int col, int row, uint16_t color, 
 
     for (int y = y0; y < y1; ++y) {
         for (int x = x0; x < x1; ++x) {
-            pixels[y * P4SCAN_LCM_H_RES + x] = color;
+            lcm_set_pixel(pixels, y * P4SCAN_LCM_H_RES + x, color);
         }
     }
 }
 
-static uint16_t snake_background_color(void)
+static void snake_background_color(lcm_pixel_t *pixels, size_t index)
 {
-    return 0x0841;
+    lcm_set_pixel(pixels, index, 0x081020);
 }
 
-static void restore_checker_cell(uint16_t *pixels, int col, int row)
+static void restore_checker_cell(lcm_pixel_t *pixels, int col, int row)
 {
     const int x0 = col * P4SCAN_SNAKE_CELL_SIZE;
     const int y0 = row * P4SCAN_SNAKE_CELL_SIZE;
@@ -66,7 +85,7 @@ static void restore_checker_cell(uint16_t *pixels, int col, int row)
 
     for (int y = y0; y < y1; ++y) {
         for (int x = x0; x < x1; ++x) {
-            pixels[y * P4SCAN_LCM_H_RES + x] = snake_background_color();
+            snake_background_color(pixels, y * P4SCAN_LCM_H_RES + x);
         }
     }
 }
@@ -80,7 +99,7 @@ static snake_cell_t snake_cell_at(uint32_t head_step, int segment)
     return cell;
 }
 
-static void draw_snake_state(uint16_t *pixels, uint32_t head_step, uint32_t food_step,
+static void draw_snake_state(lcm_pixel_t *pixels, uint32_t head_step, uint32_t food_step,
                              int *min_row, int *max_row)
 {
     *min_row = P4SCAN_SNAKE_ROWS;
@@ -89,19 +108,20 @@ static void draw_snake_state(uint16_t *pixels, uint32_t head_step, uint32_t food
     // Draw the body from tail to head so every frame has a deterministic shape.
     for (int segment = P4SCAN_SNAKE_LENGTH - 1; segment >= 0; --segment) {
         snake_cell_t cell = snake_cell_at(head_step, segment);
-        draw_snake_cell(pixels, cell.col, cell.row, segment == 0 ? 0xFFE0 : 0x07E0, 4);
+        draw_snake_cell(pixels, cell.col, cell.row,
+                        segment == 0 ? 0xFFE000 : 0x00FF00, 4);
         *min_row = MIN(*min_row, cell.row);
         *max_row = MAX(*max_row, cell.row);
     }
 
     snake_cell_t food;
     snake_path_point(food_step, &food.col, &food.row);
-    draw_snake_cell(pixels, food.col, food.row, 0xF800, 9);
+    draw_snake_cell(pixels, food.col, food.row, 0xFF0000, 9);
     *min_row = MIN(*min_row, food.row);
     *max_row = MAX(*max_row, food.row);
 }
 
-static void update_snake_frame(uint16_t *pixels, uint32_t old_head_step,
+static void update_snake_frame(lcm_pixel_t *pixels, uint32_t old_head_step,
                                uint32_t head_step, uint32_t old_food_step,
                                uint32_t food_step, int *min_row, int *max_row)
 {
@@ -166,7 +186,8 @@ void app_main(void)
     ESP_ERROR_CHECK(p4scan_lcm_backlight_set_brightness(50));
 
 #if P4SCAN_DISPLAY_ONLY
-    ESP_LOGI(TAG, "LCM display-only diagnostic is running: RGB565 snake animation, motion~20FPS, DPI~60Hz, backlight=50%%");
+    ESP_LOGI(TAG, "LCM display-only diagnostic is running: %s snake animation, motion~20FPS, backlight=50%%",
+             P4SCAN_LCM_PIXEL_FORMAT_NAME);
 #else
     ESP_ERROR_CHECK(p4scan_touch_init(bus));
     ESP_LOGI(TAG, "LCM demo is running: checkerboard, touch IRQ GPIO=%d, backlight=50%%",
@@ -179,7 +200,7 @@ void app_main(void)
     uint32_t food_step = 73 % path_length;
     int min_row;
     int max_row;
-    draw_snake_state((uint16_t *)frame_buffer, head_step, food_step, &min_row, &max_row);
+    draw_snake_state((lcm_pixel_t *)frame_buffer, head_step, food_step, &min_row, &max_row);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel, 0,
                                                min_row * P4SCAN_SNAKE_CELL_SIZE,
                                                P4SCAN_LCM_H_RES,
@@ -191,7 +212,7 @@ void app_main(void)
         uint32_t old_food_step = food_step;
         head_step = (frame++ / P4SCAN_SNAKE_STEP_FRAMES) % path_length;
         food_step = (((frame / 240) * 137) + 73) % path_length;
-        update_snake_frame((uint16_t *)frame_buffer, old_head_step, head_step,
+        update_snake_frame((lcm_pixel_t *)frame_buffer, old_head_step, head_step,
                            old_food_step, food_step, &min_row, &max_row);
         ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel, 0,
                                                    min_row * P4SCAN_SNAKE_CELL_SIZE,
