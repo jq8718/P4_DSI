@@ -98,6 +98,7 @@ Get-PnpDevice -Class Ports -PresentOnly | Select-Object FriendlyName, InstanceId
 
 - LCD 为 ILI9882Q，分辨率 `720x1440`，当前使用已验证稳定的 RGB565（RGB888 边界测试出现花屏），ESP32-P4 DSI 固定为 2-lane。
 - DSI lane rate 为 1000 Mbps/lane，RGB565 稳定配置使用 `PLL_F160M` 的 DPI 80 MHz，时序为 `HBP/HSYNC/HFP=64/52/64`、`VBP/VSYNC/VFP=16/4/20`，总时序 `900x1480`，理论刷新约 60.06 Hz。ESP32-P4 默认 `PLL_F240M` 对请求的 94 MHz 只能整数分频，实际会变成 120 MHz。当前测试 ILI9882Q Page 6 的 `D9=0x0F`，4-lane 例程的 `0x1F` 不使用。
+- 显示模式由 `components/p4scan_lcm_display/include/p4scan_lcm_display.h` 中的 `P4SCAN_LCM_USE_RGB888` 控制：`0` 为 RGB565 稳定配置，`1` 为已保存的 RGB888/1.5 Gbps 限制测试配置。
 - 背光 PWM 使用 GPIO22，频率 1 kHz，默认亮度 50%；`p4scan_lcm_backlight_set_brightness()` 接受 0 到 100 的亮度百分比。背光硬件使能为 PCA9538A@`0x71` 的 P7。
 - T2351 使用 I2C `0x41`，INT 为 GPIO23，内部上拉、下降沿中断；使用 43 字节、Report ID `0x5A` 的 demo 报文，并校验负和 checksum，触摸坐标和 release 事件通过 log 输出。
 - PCA9538A@`0x71` 使用 I2C GPIO7/GPIO8，P0 为 RST_CTP，P1 为 LCM_RST，P2/P3 为 EN_1V8/EN_VGP1，P5/P6 为 ENN/ENP，P4 为 LED1，P7 为 BL_EN。
@@ -144,9 +145,8 @@ RGB888 边界测试结果如下：
 - `HBP/HFP=22/22`，`H_TOTAL=816`，`49.682 Hz`，无软件链路错误。
 - `HBP/HFP=14/14`，`H_TOTAL=800`，`50.675 Hz`，无软件链路错误。
 
-当前板上保持最后一档 `H_TOTAL=800`，用于现场确认画面稳定性。串口无错误不代表面板
-一定无花屏，最终以整屏视觉结果为准；产品稳定配置仍建议 RGB565/60.060 Hz。测试固件
-的 RGB888 帧缓存为每像素 3 字节。
+RGB888 各档均已完成现场测试，当前板上已恢复 RGB565/60.060 Hz 稳定固件。测试固件的
+RGB888 帧缓存为每像素 3 字节。
 
 触摸屏现场触摸时应看到类似以下日志：
 

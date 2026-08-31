@@ -14,7 +14,7 @@ extern "C" {
 
 // Select the panel test mode in one place. The RGB888 setting is kept as a
 // reproducible 1.5 Gbps-limited experiment; production defaults to RGB565.
-#define P4SCAN_LCM_USE_RGB888 1
+#define P4SCAN_LCM_USE_RGB888 0
 #define P4SCAN_LCM_DSI_LANES 2
 #define P4SCAN_LCM_DSI_LANE_RATE_MBPS 1000
 #define P4SCAN_LCM_MAX_VIDEO_BANDWIDTH_MBPS 1500

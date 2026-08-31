@@ -310,8 +310,8 @@ esp_err_t p4scan_lcm_display_init(esp_lcd_panel_handle_t *ret_panel, void **ret_
     uint8_t *pixels = (uint8_t *)frame_buffer;
     for (int y = 0; y < P4SCAN_LCM_V_RES; ++y) {
         for (int x = 0; x < P4SCAN_LCM_H_RES; ++x) {
-            size_t offset = (y * P4SCAN_LCM_H_RES + x) * P4SCAN_LCM_PIXEL_BYTES;
 #if P4SCAN_LCM_USE_RGB888
+            size_t offset = (y * P4SCAN_LCM_H_RES + x) * P4SCAN_LCM_PIXEL_BYTES;
             pixels[offset + 0] = 0x08;
             pixels[offset + 1] = 0x10;
             pixels[offset + 2] = 0x20;
