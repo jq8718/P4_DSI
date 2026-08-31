@@ -31,8 +31,16 @@ typedef struct {
 
 #if P4SCAN_LCM_USE_RGB888
 typedef uint8_t lcm_pixel_t;
+#define P4SCAN_COLOR_BACKGROUND 0x081020
+#define P4SCAN_COLOR_HEAD       0xFFE000
+#define P4SCAN_COLOR_BODY       0x00FF00
+#define P4SCAN_COLOR_FOOD       0xFF0000
 #else
 typedef uint16_t lcm_pixel_t;
+#define P4SCAN_COLOR_BACKGROUND 0x0841
+#define P4SCAN_COLOR_HEAD       0xFFE0
+#define P4SCAN_COLOR_BODY       0x07E0
+#define P4SCAN_COLOR_FOOD       0xF800
 #endif
 
 static void lcm_set_pixel(lcm_pixel_t *pixels, size_t index, uint32_t color)
@@ -73,7 +81,7 @@ static void draw_snake_cell(lcm_pixel_t *pixels, int col, int row,
 
 static void snake_background_color(lcm_pixel_t *pixels, size_t index)
 {
-    lcm_set_pixel(pixels, index, 0x081020);
+    lcm_set_pixel(pixels, index, P4SCAN_COLOR_BACKGROUND);
 }
 
 static void restore_checker_cell(lcm_pixel_t *pixels, int col, int row)
@@ -109,14 +117,14 @@ static void draw_snake_state(lcm_pixel_t *pixels, uint32_t head_step, uint32_t f
     for (int segment = P4SCAN_SNAKE_LENGTH - 1; segment >= 0; --segment) {
         snake_cell_t cell = snake_cell_at(head_step, segment);
         draw_snake_cell(pixels, cell.col, cell.row,
-                        segment == 0 ? 0xFFE000 : 0x00FF00, 4);
+                        segment == 0 ? P4SCAN_COLOR_HEAD : P4SCAN_COLOR_BODY, 4);
         *min_row = MIN(*min_row, cell.row);
         *max_row = MAX(*max_row, cell.row);
     }
 
     snake_cell_t food;
     snake_path_point(food_step, &food.col, &food.row);
-    draw_snake_cell(pixels, food.col, food.row, 0xFF0000, 9);
+    draw_snake_cell(pixels, food.col, food.row, P4SCAN_COLOR_FOOD, 9);
     *min_row = MIN(*min_row, food.row);
     *max_row = MAX(*max_row, food.row);
 }
